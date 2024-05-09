@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
+from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import h5py
 
 # Load data
@@ -21,39 +23,33 @@ def load_data(path):
 
     return train_data, valid_data, test_data
 
-class SimpleCNN(nn.Module):
-    def __init__(self, num_channels=1, num_filters1=32, num_filters2=64, kernel_size1=3, kernel_size2=3,
-                 stride1=1, stride2=1, padding1=1, padding2=1, pool_kernel_size=2, pool_stride=2,
-                 num_units_fc1=128, num_classes=2):
-        super(SimpleCNN, self).__init__()
-        
-        self.conv1 = nn.Conv2d(num_channels, num_filters1, kernel_size=kernel_size1,
-                               stride=stride1, padding=padding1)
-        self.conv2 = nn.Conv2d(num_filters1, num_filters2, kernel_size=kernel_size2,
-                               stride=stride2, padding=padding2)
-        self.pool = nn.MaxPool2d(kernel_size=pool_kernel_size, stride=pool_stride)
+class CNN(nn.Module):
 
-        example_size = (1, num_channels, 250, 100)  # (batch_size, channels, height, width)
-        with torch.no_grad():
-            example_input = torch.autograd.Variable(torch.rand(example_size))
-            example_output = self.pool(self.conv2(self.pool(self.conv1(example_input))))
-            self.flattened_size = example_output.data.view(1, -1).size(1)
-        
-        self.fc1 = nn.Linear(self.flattened_size, num_units_fc1)
-        self.fc2 = nn.Linear(num_units_fc1, num_classes)
+    def __init__(self):
+        super(CNN, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, 3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.dropout1 = nn.Dropout(0.25)
+        self.fc1 = nn.Linear(64 * 62 * 25, 128)
+        self.dropout2 = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(128, 2)
 
     def forward(self, x):
-        x = F.relu(self.pool(self.conv1(x)))
-        x = F.relu(self.pool(self.conv2(x)))
-        x = x.view(-1, self.flattened_size)  # Flatten
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 64 * 62 * 25)
+        x = self.dropout1(x)
         x = F.relu(self.fc1(x))
+        x = self.dropout2(x)
         x = self.fc2(x)
         return x
 
 def train_model(model, train_loader, valid_loader, num_epochs, device):
     best_accuracy = 0
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)  # Adjusted learning rate for illustration
     criterion = nn.CrossEntropyLoss()
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
 
     for epoch in range(num_epochs):
         model.train()
@@ -86,6 +82,8 @@ def train_model(model, train_loader, valid_loader, num_epochs, device):
         accuracy = 100 * correct / total
         print(f'Validation Loss: {valid_loss / len(valid_loader)}, Accuracy: {accuracy}%')
 
+        scheduler.step(valid_loss)  # Update the learning rate based on validation loss
+
         if accuracy > best_accuracy:
             best_accuracy = accuracy
             print(f"Saving new best model with accuracy {accuracy}%")
@@ -96,9 +94,10 @@ if __name__ == '__main__':
     print(f"Using device: {device}")
 
     train_data, valid_data, _ = load_data('/mnt/c/Users/ashto/Desktop/Class/ME592/ME592X/GroupData/Combustion/Aditya_data/combustion_img_13.mat')
-    train_loader = DataLoader(train_data, batch_size=100, shuffle=True)
-    valid_loader = DataLoader(valid_data, batch_size=100, shuffle=False)
+    train_loader = DataLoader(train_data, batch_size=40, shuffle=True)
+    valid_loader = DataLoader(valid_data, batch_size=40, shuffle=False)
 
-    model = SimpleCNN().to(device)
-    num_epochs = 20
+    model = CNN().to(device)
+
+    num_epochs = 100
     train_model(model, train_loader, valid_loader, num_epochs, device)
